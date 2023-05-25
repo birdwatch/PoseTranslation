@@ -1,0 +1,67 @@
+[tool.poetry]
+name = "research_template"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+Pillow = "^9.0.1"
+PyYAML = "^6.0"
+numpy = "^1.22.3"
+pandas = "^1.4.1"
+wandb = "^0.12.11"
+hiddenlayer = "^0.3"
+graphviz = "^0.19.1"
+opencv-python = "4.5.5.64"
+pydantic = "^1.9.0"
+addict = "^2.4.0"
+torch = {url = "https://download.pytorch.org/whl/cu113/torch-1.12.1%2Bcu116-cp38-cp38-linux_x86_64.whl"}
+
+[tool.poetry.dev-dependencies]
+black = "^22.1.0"
+flake8 = "^4.0.1"
+isort = "^5.10.1"
+mypy = "^0.931"
+pytest = "^7.0.1"
+pytest-cov = "^3.0.0"
+pytest-mock = "^3.7.0"
+jupyterlab = "^3.3.0"
+bandit = "^1.7.4"
+poethepoet = "^0.13.1"
+flake8-bugbear = "22.1.11"
+flake8-builtins = "1.5.3"
+flake8-eradicate = "1.2.0"
+pep8-naming = "0.12.1"
+flake8-expression-complexity = "0.0.10"
+flake8-cognitive-complexity = "0.1.0"
+flake8-pytest-style = "1.6.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.isort]
+ensure_newline_before_comments = true
+force_grid_wrap = 0
+include_trailing_comma = true
+line_length = 88
+multi_line_output = 3
+use_parentheses = true
+
+[tool.poe.tasks]
+install_sklearn = """
+    pip install \
+        scipy==1.7.3 \
+        scikit-learn
+"""
+
+install_torch = """
+    pip install \
+        torch==1.10.2 \
+        torchvision \
+        timm \
+        torchinfo \
+        imgaug \
+"""

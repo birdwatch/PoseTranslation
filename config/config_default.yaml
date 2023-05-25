@@ -1,0 +1,15 @@
+result_root_dir: "/results/"
+WORKER: 6
+
+MODEL:
+    NAME: "swing_net"
+
+DATASET:
+    NAME: "golfdb"
+    path: "/data/golfdb/"
+
+TRAIN:
+    EPOCHS: 10
+    BATCH_SIZE: 10
+    OPTIMIZER: "adam"
+    learning_rate: 0.1
