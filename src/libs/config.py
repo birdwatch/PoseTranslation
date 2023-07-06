@@ -5,7 +5,7 @@ import yaml
 from addict import Dict
 
 
-def load_config(file_path: str) -> dict:
+def get_config(file_path: str) -> dict:
     if not os.path.exists(file_path):
         print("Config file not found!")
         sys.exit(1)

@@ -7,7 +7,6 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-Pillow = "^9.0.1"
 PyYAML = "^6.0"
 numpy = "^1.22.3"
 pandas = "^1.4.1"
@@ -17,7 +16,24 @@ graphviz = "^0.19.1"
 opencv-python = "4.5.5.64"
 pydantic = "^1.9.0"
 addict = "^2.4.0"
-torch = {url = "https://download.pytorch.org/whl/cu113/torch-1.12.1%2Bcu116-cp38-cp38-linux_x86_64.whl"}
+torch = "1.12.1+cu113"
+torchvision = "0.13.1+cu113"
+scipy = "1.9.3"
+pillow = "^9.5.0"
+scikit-learn = "^1.2.2"
+einops = "^0.6.1"
+pytorch-memlab = "^0.2.4"
+
+[[tool.poetry.source]]
+name = "PyPI"
+priority = "default"
+
+
+[[tool.poetry.source]]
+name = "torch_cu113"
+url = "https://download.pytorch.org/whl/cu113"
+priority = "supplemental"
+
 
 [tool.poetry.dev-dependencies]
 black = "^22.1.0"
@@ -37,6 +53,10 @@ pep8-naming = "0.12.1"
 flake8-expression-complexity = "0.0.10"
 flake8-cognitive-complexity = "0.1.0"
 flake8-pytest-style = "1.6.0"
+
+
+[tool.poetry.group.dev.dependencies]
+types-pyyaml = "^6.0.12.10"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

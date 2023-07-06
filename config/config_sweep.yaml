@@ -3,8 +3,10 @@ metric:
     name: train_loss
     goal: minimize
 parameters:
-    lr:
+  TRAIN.LR:
         min: 0.001
         max: 0.1
-    optimizer:
+    TRAIN.OPTIMIZER:
         values: ["adam", "sgd"]
+    MODEL.DROPOUT:
+        values: [true, false]

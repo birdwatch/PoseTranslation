@@ -1,4 +1,5 @@
 from logging import getLogger
+from typing import List
 
 import pandas as pd
 
@@ -19,6 +20,8 @@ class TrainLogger(object):
             "val_loss",
             "val_acc@1",
             "val_f1s",
+            "PCE",
+            "acc_per_phase[%]",
         ]
 
         if resume:
@@ -51,6 +54,8 @@ class TrainLogger(object):
         val_loss: float,
         val_acc1: float,
         val_f1s: float,
+        PCE: float,
+        acc_per_phase: List[int],
     ) -> None:
         tmp = pd.Series(
             [
@@ -64,15 +69,20 @@ class TrainLogger(object):
                 val_loss,
                 val_acc1,
                 val_f1s,
+                PCE,
+                acc_per_phase,
             ],
             index=self.columns,
         )
 
         self.df = self.df.append(tmp, ignore_index=True)
+        # self.df = self.df.concat([self.df, tmp], ignore_index=True)
+        # self.df = pd.concat([self.df, tmp], ignore_index=True)
         self._save_log()
 
         logger.info(
             f"epoch: {epoch}\tepoch time[sec]: {train_time + val_time}\tlr: {lr}\t"
             f"train loss: {train_loss:.4f}\tval loss: {val_loss:.4f}\t"
-            f"val_acc1: {val_acc1:.5f}\tval_f1s: {val_f1s:.5f}"
+            f"val_acc1: {val_acc1:.5f}\tval_f1s: {val_f1s:.5f}\t"
+            f"PCE: {PCE:.5f}\tacc_per_phase: {acc_per_phase}"
         )

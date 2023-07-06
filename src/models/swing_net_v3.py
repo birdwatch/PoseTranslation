@@ -12,10 +12,12 @@ from torchvision.models import (
 )
 from torchvision.models.video import R3D_18_Weights, r3d_18
 
+from src.models.ASFormer import ASFormer
+
 logger = logging.getLogger(__name__)
 
 
-class SwingNet(nn.Module):
+class SwingNetV3(nn.Module):
     def __init__(
         self,
         phase_num: int = 8,
@@ -53,15 +55,18 @@ class SwingNet(nn.Module):
             raise NotImplementedError
         logger.info(f"Backbone: {backbone}")
 
-        self.fusion_feature_masked_label = nn.Conv1d(cnn_out_channels + 1, cnn_out_channels, 1)
-
-        self.rnn = nn.LSTM(
-            int(cnn_out_channels * self.width_mult if self.width_mult > 1.0 else cnn_out_channels),
-            self.lstm_hidden,
-            self.lstm_layers,
-            batch_first=True,
-            bidirectional=self.bidirectional,
+        self.asformer = ASFormer(
+            num_decoders=1,
+            num_layers=3,
+            r1=4,
+            r2=4,
+            num_f_maps=64,
+            input_dim=cnn_out_channels,
+            num_classes=phase_num,
+            channel_masking_rate=0.25,
+            device=device,
         )
+
         if self.bidirectional:
             self.lin = nn.Linear(2 * self.lstm_hidden, self.phase_num)
         else:
@@ -89,35 +94,100 @@ class SwingNet(nn.Module):
                 ),
             )
 
-    def forward(self, x: torch.Tensor, masked_label: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
         batch_size, timesteps, C, H, W = x.size()
         self.hidden = self.init_hidden(batch_size)
-
         # CNN forward
         c_in = x.view(batch_size * timesteps, C, H, W)
         c_out = self.cnn(c_in)
         if self.dropout:
             c_out = self.drop(c_out)
 
-        # Fusion
-        if masked_label is not None:
-            masked_label = masked_label.view(batch_size * timesteps, 1, 1).repeat(1, 1, c_out.size(2))
-            f_in = torch.cat((c_out, masked_label), dim=1)
-            f_out = self.fusion_feature_masked_label(f_in)
-            r_in = f_out.view(batch_size, timesteps, -1)
-        else:
-            r_in = c_out.view(batch_size, timesteps, -1)
+        r_in = c_out.view(batch_size, -1, timesteps)
 
-        # LSTM forward
-        r_out, states = self.rnn(r_in, self.hidden)
-        out = self.lin(r_out)
-        out = out.view(batch_size * timesteps, self.phase_num)
+        # ASFormer forward
+        out = self.asformer(r_in, mask)
 
         return out
 
+    def make_mask(self, label: torch.Tensor) -> torch.Tensor:
+        mask = torch.ones_like(label)
+        mask[label == 0] = 0
+        return mask
+
+
+class Encoder(nn.Module):
+    def __init__(self, features: int, hidden_dim: int, device: str = "cuda") -> None:
+        super().__init__()
+
+        self.hidden_dim = hidden_dim
+        self.device = device
+
+        self.lstm = nn.LSTM(features, hidden_dim, batch_first=True, bidirectional=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch_size = x.size(0)
+        hidden = self.init_hidden(batch_size)
+        output, hidden = self.lstm(x, hidden)
+        return hidden
+
+    def init_hidden(self, batch_size: int) -> tuple:
+        return (
+            Variable(torch.zeros(2, batch_size, self.hidden_dim).to(self.device), requires_grad=True),
+            Variable(torch.zeros(2, batch_size, self.hidden_dim).to(self.device), requires_grad=True),
+        )
+
+
+class Decoder(nn.Module):
+    def __init__(self, embedding_dim: int, hidden_dim: int, dropout: int, device: str = "cuda") -> None:
+        super().__init__()
+
+        self.hidden_dim = hidden_dim
+        self.device = device
+        self.embedding_dim = embedding_dim
+
+        self.embedding = nn.Embedding(1, embedding_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.lstm = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)
+        self.out = nn.Linear(hidden_dim, 1)
+
+    def forward(self, x: torch.Tensor, hidden: torch.Tensor) -> torch.Tensor:
+        embedded = self.embedding(x)
+        # embedded = self.dropout(embedded)
+        output, hidden = self.lstm(embedded, hidden)
+        output = self.out(output)
+        return output, hidden
+
+
+class AttentionDecoder(nn.Module):
+    def __init__(self, embedding_dim: int, hidden_dim: int, dropout: int, device: str = "cuda") -> None:
+        super().__init__()
+
+        self.hidden_dim = hidden_dim
+        self.device = device
+        self.embedding_dim = embedding_dim
+
+        self.embedding = nn.Embedding(1, embedding_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.lstm = nn.LSTM(embedding_dim, hidden_dim, batch_first=True, bidirectional=True)
+        self.out = nn.Linear(hidden_dim * 2, 1)
+
+    def forward(self, x: torch.Tensor, hidden: torch.Tensor) -> torch.Tensor:
+        embedded = self.embedding(x)
+        embedded = self.dropout(embedded)
+        output, hidden = self.lstm(embedded, hidden)
+        output = self.out(output)
+
+        t_output = output.transpose(1, 2)
+        s = torch.bmm(t_output, output)
+        attention_weights = torch.softmax(s, dim=2)
+        output = torch.bmm(output, attention_weights)
+        output = output.transpose(1, 2)
+        return output, hidden
+
 
 def get_model(config: Dict[str, Any], device: str = "cuda") -> nn.Module:
-    model = SwingNet(
+    model = SwingNetV3(
         phase_num=config.MODEL.PHASE_NUM,
         width_mult=config.MODEL.WIDTH_MULT,
         lstm_layers=config.MODEL.LSTM_LAYERS,

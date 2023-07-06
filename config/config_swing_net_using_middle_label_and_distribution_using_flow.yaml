@@ -1,31 +1,31 @@
 AUTO_RESUME: true
 USE_SWEEP: false
-OUTPUT_DIR: "results/015/"
+OUTPUT_DIR: "results/013/"
 WORKERS: 6
 
 MODEL:
-    NAME: "phase_net"
+    NAME: "swing_net_v2"
     PRETRAINED: ""
     IMAGE_SIZE:
         - 256
         - 256
 
-    DROPOUT: false
     PHASE_NUM: 9 # include other
-
+    
     # swing net param which using lstm
-    # WIDTH_MULT: 1
-    # LSTM_LAYERS: 1
-    # LSTM_HIDEEN: 256
-    # BIDIRECTIONAL: true
+    BACKBONE: "mobilenet_v2"
+    WIDTH_MULT: 1
+    LSTM_LAYERS: 1
+    LSTM_HIDEEN: 256
+    BIDIRECTIONAL: true
 
     # phase net param which using tcn
-    N_FEATURES: 128
-    N_STAGES: 10
-    N_LAYERS: 10
+    # N_FEATURES: 64
+    # N_STAGES: 4
+    # N_LAYERS: 10
 
 DATASET:
-    NAME: "golfdb"
+    NAME: "golfdb_with_flow"
     DATA_FORMAT: "mp4"
     ROOT: "data/golfdb/"
     VID_DIR: "data/golfdb/videos_160/"
@@ -37,16 +37,17 @@ DATASET:
     DROP_LAST: true
 
     SEQ_LENGTH: 64
-    USE_LABEL_DISTRIBUTION: true
+    USE_LABEL_DISTRIBUTION: false
     USE_OTHER_PHASE_LABEL: false
-    SIGMA_LABEL_DISTRIBUTION: 0.9
+    SIGMA_LABEL_DISTRIBUTION: 0.3
     USE_MIDDLE_PHASE_LABEL_ONLY: true
+    USE_TEMPORAL_LABEL_SMOOTHING: false
 
 LOSS:
     USE_TARGET_WEIGHT: false
     WEIGHTS: [1, 0, 0, 0]
     CE: true
-    CE_WEIGHT: [0.125, 0.125, 0.125, 0.125, 0.125, 0.125, 0.125, 0.125, 0.125]
+    CE_WEIGHT: [0.125, 0.125, 0.125, 0.125, 0.125, 0.125,0.125, 0.125, 0.125]
     FOCAL: false
     FOCAL_WEIGHT: 1.0
     GSTMSE: false
@@ -58,9 +59,10 @@ LOSS:
 
 TRAIN:
     EPOCHS: 500
-    BATCH_SIZE: 1
+    BATCH_SIZE: 8
     OPTIMIZER: "adam"
     LR: 0.0005
+    SEQ_LENGTH: 64
 
 DEBUG:
     DEBUG: true

@@ -3,30 +3,35 @@ import datetime
 import os
 import time
 from logging import DEBUG, INFO, basicConfig, getLogger
+from typing import Any, Dict
 
 import torch
 import torch.optim as optim
 import wandb
-from torchvision.transforms import (
-    ColorJitter,
-    Compose,
-    Normalize,
-    RandomHorizontalFlip,
-    RandomResizedCrop,
-    ToTensor,
-)
+from torchvision.transforms import Compose
 
-from dataset import get_dataloader
+from datasets import get_dataloader
 from libs.checkpoint import resume, save_checkpoint
 from libs.class_id_map import get_cls2id_map
-from libs.config import load_config, save_config
+from libs.config import get_config, save_config
 from libs.device import get_device
 from libs.helper import evaluate, train
 from libs.logger import TrainLogger
 from libs.loss_fn import get_criterion
 from libs.mean_std import get_mean, get_std
 from libs.seed import set_seed
+from libs.transformer import Normalize, ToTensor
 from models import get_model
+
+# from torchvision.transforms import (
+#     ColorJitter,
+#     Compose,
+#     Normalize,
+#     RandomHorizontalFlip,
+#     RandomResizedCrop,
+#     ToTensor,
+# )
+
 
 logger = getLogger(__name__)
 
@@ -40,16 +45,11 @@ def get_arguments() -> argparse.Namespace:
         train a network for image classification with Flowers Recognition Dataset.
         """
     )
-    parser.add_argument("config", type=str, help="path of a config file")
+    parser.add_argument("--config", type=str, help="path of a config file")
     parser.add_argument(
         "--resume",
         action="store_true",
         help="Add --resume option if you start training from checkpoint.",
-    )
-    parser.add_argument(
-        "--use_wandb",
-        action="store_true",
-        help="Add --use_wandb option if you want to use wandb.",
     )
     parser.add_argument(
         "--debug",
@@ -66,49 +66,29 @@ def get_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def prepare_train(config, device) -> tuple:
+def prepare_train(config: Dict[str, Any], device: str) -> tuple:
     # Dataloader
+    normailzer = Normalize(mean=get_mean(), std=get_std())
     train_transform = Compose(
         [
-            RandomResizedCrop(size=(config.height, config.width)),
-            RandomHorizontalFlip(),
-            ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
             ToTensor(),
-            Normalize(mean=get_mean(), std=get_std()),
+            normailzer,
         ]
     )
 
-    val_transform = Compose(
-        [ToTensor(), Normalize(mean=get_mean(), std=get_std())]
-    )
+    val_transform = Compose([ToTensor(), Normalize(mean=get_mean(), std=get_std())])
 
-    train_loader = get_dataloader(
-        config.DATASET.NAME,
-        "train",
-        batch_size=config.TRAIN.batch_size,
-        shuffle=True,
-        num_workers=config.TRAIN.num_workers,
-        pin_memory=True,
-        drop_last=True,
-        transform=train_transform,
-    )
+    train_loader = get_dataloader(config, "train", train_transform)
 
-    val_loader = get_dataloader(
-        config.DATASET.NAME,
-        "val",
-        batch_size=1,
-        shuffle=False,
-        num_workers=config.VALIDATION.num_workers,
-        pin_memory=True,
-        transform=val_transform,
-    )
-    # the number of classes
-    n_classes = len(get_cls2id_map())
+    val_loader = get_dataloader(config, "val", val_transform)
+
+    # # the number of classes
+    # n_classes = len(get_cls2id_map())
 
     # define a model
-    model = get_model(config.MODEL_NAME, config.MODEL.params, device)
+    model = get_model(config, device)
 
-    optimizer = optim.Adam(model.parameters(), lr=config.TRAIN.learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=config.TRAIN.LR)
 
     # keep training and validation log
     begin_epoch = 0
@@ -116,7 +96,20 @@ def prepare_train(config, device) -> tuple:
 
     # criterion for loss
     criterion = get_criterion(
-        config.use_class_weight, config.DATASET.NAME, device
+        config.LOSS.USE_TARGET_WEIGHT,
+        config.LOSS.WEIGHTS,
+        config.DATASET.NAME,
+        device,
+        config.LOSS.CE,
+        config.LOSS.FOCAL,
+        config.LOSS.TMSE,
+        config.LOSS.GSTMSE,
+        config.LOSS.THRESHOLD,
+        config.LOSS.IGNORE_INDEX,
+        config.LOSS.CE_WEIGHT,
+        config.LOSS.FOCAL_WEIGHT,
+        config.LOSS.TMSE_WEIGHT,
+        config.LOSS.GSTMSE_WEIGHT,
     )
 
     return (
@@ -130,8 +123,8 @@ def prepare_train(config, device) -> tuple:
     )
 
 
-def train_with_sweep(config, device) -> None:
-    with wandb.init(config=config):
+def train_with_sweep(default_config, device) -> None:
+    with wandb.init(config=default_config.to):
         config = wandb.config
         wandb.run.name = f"{config.MODEL.NAME}_{config.DATASET.NAME}_{config.TRAIN.optimizer}"
         wandb.run.save()
@@ -148,25 +141,20 @@ def train_with_sweep(config, device) -> None:
 
         wandb.watch(model)
 
-        result_path = os.path.join(
-            os.path.dirname(config.result_root_dir), wandb.run.name
-        )
+        result_path = os.path.join(os.path.dirname(config.result_root_dir), wandb.run.name)
         train_logger = TrainLogger(result_path)
         save_config(config, os.path.join(result_path, "config.yaml"))
 
         # training
         for epoch in range(begin_epoch, config.TRAIN.epochs):
+            print("-" * 20)
             start = time.time()
-            train_loss, train_acc1, train_f1s = train(
-                train_loader, model, criterion, optimizer, epoch, device
-            )
+            train_loss, train_acc1, train_f1s = train(train_loader, model, criterion, optimizer, epoch, device)
             train_time = int(time.time() - start)
 
             # validation
             start = time.time()
-            val_loss, val_acc1, val_f1s, c_matrix = evaluate(
-                val_loader, model, criterion, device
-            )
+            val_loss, val_acc1, val_f1s, PCE, acc_per_phase = evaluate(val_loader, model, criterion, device)
             val_time = int(time.time() - start)
 
             # save a model if top1 acc is higher than ever
@@ -192,6 +180,8 @@ def train_with_sweep(config, device) -> None:
                 val_loss,
                 val_acc1,
                 val_f1s,
+                PCE,
+                acc_per_phase,
             )
 
             wandb.log(
@@ -205,14 +195,14 @@ def train_with_sweep(config, device) -> None:
                     "val_loss": val_loss,
                     "val_acc@1": val_acc1,
                     "val_f1s": val_f1s,
+                    "PCE": PCE,
+                    "acc_per_phase": acc_per_phase,
                 },
                 step=epoch,
             )
 
         # save models
-        torch.save(
-            model.state_dict(), os.path.join(result_path, "final_model.prm")
-        )
+        torch.save(model.state_dict(), os.path.join(result_path, "final_model.prm"))
 
         # delete checkpoint
         os.remove(os.path.join(result_path, "checkpoint.pth"))
@@ -230,25 +220,24 @@ def train_wo_sweep(config, device) -> None:
         best_loss,
         criterion,
     ) = prepare_train(config, device)
-    result_path = os.path.join(
-        os.path.dirname(config.result_root_dir), config.MODEL.NAME
-    )
-    train_logger = TrainLogger(result_path)
+    result_path = os.path.join(os.path.dirname(config.OUTPUT_DIR))
+    log_path = os.path.join(result_path, "experiment.csv")
+    if not os.path.exists(result_path):
+        os.makedirs(result_path)
+
+    train_logger = TrainLogger(log_path, False)
     save_config(config, os.path.join(result_path, "config.yaml"))
 
     # training
-    for epoch in range(begin_epoch, config.epochs):
+    for epoch in range(begin_epoch, config.TRAIN.EPOCHS):
+        print("-" * 20)
         start = time.time()
-        train_loss, train_acc1, train_f1s = train(
-            train_loader, model, criterion, optimizer, epoch, device
-        )
+        train_loss, train_acc1, train_f1s = train(train_loader, model, criterion, optimizer, epoch, device)
         train_time = int(time.time() - start)
 
         # validation
         start = time.time()
-        val_loss, val_acc1, val_f1s, c_matrix = evaluate(
-            val_loader, model, criterion, device
-        )
+        val_loss, val_acc1, val_f1s, PCE, acc_per_phase = evaluate(val_loader, model, criterion, device)
         val_time = int(time.time() - start)
 
         # save a model if top1 acc is higher than ever
@@ -274,16 +263,16 @@ def train_wo_sweep(config, device) -> None:
             val_loss,
             val_acc1,
             val_f1s,
+            PCE,
+            acc_per_phase,
         )
-
-        logger.info("Done")
 
 
 def main() -> None:
     args = get_arguments()
 
     # load config file
-    default_config = load_config(args.config)
+    default_config = get_config(args.config)
 
     # set logger
     if args.debug:
@@ -298,10 +287,8 @@ def main() -> None:
     device = get_device()
 
     # Weights and biases
-    if args.use_wandb:
-        train_with_sweep(
-            default_config, device
-        )  # for hyperparameter optimization
+    if default_config.USE_SWEEP:
+        train_with_sweep(default_config, device)  # for hyperparameter optimization
     else:
         train_wo_sweep(default_config, device)
 

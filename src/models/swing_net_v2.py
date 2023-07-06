@@ -15,7 +15,7 @@ from torchvision.models.video import R3D_18_Weights, r3d_18
 logger = logging.getLogger(__name__)
 
 
-class SwingNet(nn.Module):
+class SwingNetV2(nn.Module):
     def __init__(
         self,
         phase_num: int = 8,
@@ -53,7 +53,24 @@ class SwingNet(nn.Module):
             raise NotImplementedError
         logger.info(f"Backbone: {backbone}")
 
-        self.fusion_feature_masked_label = nn.Conv1d(cnn_out_channels + 1, cnn_out_channels, 1)
+        if backbone == "mobilenet_v2":
+            self.flow_cnn = mobilenet_v2(weights=MobileNet_V2_Weights.DEFAULT)
+            flow_cnn_out_channels = 1000
+        elif backbone == "resnet50":
+            self.flow_cnn = resnet50(weights=ResNet50_Weights.DEFAULT)
+            flow_cnn_out_channels = 2048
+        elif backbone == "r3d_18":
+            self.flow_cnn = r3d_18(weights=R3D_18_Weights.DEFAULT)
+            flow_cnn_out_channels = 512
+        else:
+            logger.error("You have to choose one of the following backbones: mobilenet_v2, resnet50, r3d_18")
+            raise NotImplementedError
+
+        self.fusion_feature = nn.Sequential(
+            nn.Conv1d(cnn_out_channels + flow_cnn_out_channels, cnn_out_channels, 1),
+            nn.ReLU(inplace=True),
+        )
+        # self.fusion_feature_masked_label = nn.Conv1d(cnn_out_channels + 1, cnn_out_channels, 1)
 
         self.rnn = nn.LSTM(
             int(cnn_out_channels * self.width_mult if self.width_mult > 1.0 else cnn_out_channels),
@@ -91,25 +108,31 @@ class SwingNet(nn.Module):
 
     def forward(self, x: torch.Tensor, masked_label: torch.Tensor = None) -> torch.Tensor:
         batch_size, timesteps, C, H, W = x.size()
+        C = int(C / 2)
+        img, flow = x[:, :, :3, :, :], x[:, :, 3:, :, :]
         self.hidden = self.init_hidden(batch_size)
 
         # CNN forward
-        c_in = x.view(batch_size * timesteps, C, H, W)
+        c_in = img.view(batch_size * timesteps, C, H, W)
         c_out = self.cnn(c_in)
-        if self.dropout:
-            c_out = self.drop(c_out)
+
+        # Flow CNN forward
+        f_in = flow.view(batch_size * timesteps, C, H, W)
+        f_out = self.flow_cnn(f_in)
 
         # Fusion
-        if masked_label is not None:
-            masked_label = masked_label.view(batch_size * timesteps, 1, 1).repeat(1, 1, c_out.size(2))
-            f_in = torch.cat((c_out, masked_label), dim=1)
-            f_out = self.fusion_feature_masked_label(f_in)
-            r_in = f_out.view(batch_size, timesteps, -1)
-        else:
-            r_in = c_out.view(batch_size, timesteps, -1)
+        fusion_in = torch.cat((c_out, f_out), dim=1)
+        fusion_in = fusion_in.view(batch_size, -1, timesteps)
+        fusion_out = self.fusion_feature(fusion_in)
+        fusion_out = fusion_out.view(batch_size * timesteps, -1)
+
+        if self.dropout:
+            fusion_out = self.drop(fusion_out)
+
+        fusion_out = fusion_out.view(batch_size, timesteps, -1)
 
         # LSTM forward
-        r_out, states = self.rnn(r_in, self.hidden)
+        r_out, states = self.rnn(fusion_out, self.hidden)
         out = self.lin(r_out)
         out = out.view(batch_size * timesteps, self.phase_num)
 
@@ -117,7 +140,7 @@ class SwingNet(nn.Module):
 
 
 def get_model(config: Dict[str, Any], device: str = "cuda") -> nn.Module:
-    model = SwingNet(
+    model = SwingNetV2(
         phase_num=config.MODEL.PHASE_NUM,
         width_mult=config.MODEL.WIDTH_MULT,
         lstm_layers=config.MODEL.LSTM_LAYERS,

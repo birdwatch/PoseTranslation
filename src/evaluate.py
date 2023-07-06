@@ -6,16 +6,17 @@ from logging import DEBUG, INFO, basicConfig, getLogger
 
 import pandas as pd
 import torch
-from torchvision.transforms import Compose, Normalize, ToTensor
+from torchvision.transforms import Compose
 
+from datasets import get_dataloader
 from libs.class_id_map import get_cls2id_map
 from libs.config import get_config
-from libs.dataset import get_dataloader
 from libs.device import get_device
 from libs.helper import evaluate
 from libs.loss_fn import get_criterion
 from libs.mean_std import get_mean, get_std
-from libs.models import get_model
+from libs.transformer import Normalize, ToTensor
+from models import get_model
 
 logger = getLogger(__name__)
 
@@ -61,9 +62,7 @@ def main() -> None:
         raise ValueError(message)
 
     # setting logger configuration
-    logname = os.path.join(
-        result_path, f"{datetime.datetime.now():%Y-%m-%d}_{args.mode}.log"
-    )
+    logname = os.path.join(result_path, f"{datetime.datetime.now():%Y-%m-%d}_{args.mode}.log")
     basicConfig(
         level=DEBUG if args.debug else INFO,
         format="[%(asctime)s] %(name)s %(levelname)s: %(message)s",
@@ -78,19 +77,15 @@ def main() -> None:
     transform = Compose([ToTensor(), Normalize(mean=get_mean(), std=get_std())])
 
     loader = get_dataloader(
-        config.dataset_name,
+        config,
         "val" if args.mode == "validation" else "test",
-        batch_size=1,
-        shuffle=False,
-        num_workers=config.num_workers,
-        pin_memory=True,
         transform=transform,
     )
 
     # the number of classes
     n_classes = len(get_cls2id_map())
 
-    model = get_model(config.model, n_classes, pretrained=config.pretrained)
+    model = get_model(config, device)
 
     # send the model to cuda/cpu
     model.to(device)
@@ -104,15 +99,32 @@ def main() -> None:
     model.load_state_dict(state_dict)
 
     # criterion for loss
-    criterion = get_criterion(config.use_class_weight, config.dataset_name, device)
+    criterion = get_criterion(
+        config.LOSS.USE_TARGET_WEIGHT,
+        config.LOSS.WEIGHTS,
+        config.DATASET.NAME,
+        device,
+        config.LOSS.CE,
+        config.LOSS.FOCAL,
+        config.LOSS.TMSE,
+        config.LOSS.GSTMSE,
+        config.LOSS.THRESHOLD,
+        config.LOSS.IGNORE_INDEX,
+        config.LOSS.CE_WEIGHT,
+        config.LOSS.FOCAL_WEIGHT,
+        config.LOSS.TMSE_WEIGHT,
+        config.LOSS.GSTMSE_WEIGHT,
+    )
 
     # train and validate model
     logger.info(f"---------- Start evaluation for {args.mode} data ----------")
 
     # evaluation
-    loss, acc1, f1s, c_matrix = evaluate(loader, model, criterion, device)
+    loss, acc1, f1s, PCE, acc_per_phase = evaluate(loader, model, criterion, device)
 
-    logger.info("loss: {:.5f}\tacc1: {:.2f}\tF1 Score: {:.2f}".format(loss, acc1, f1s))
+    print("loss: {:.5f}\tacc1: {:.2f}\tF1 Score: {:.2f}\t PCE: {:.2f}".format(loss, acc1, f1s, PCE))
+
+    print("acc_per_phase: ", acc_per_phase)
 
     df = pd.DataFrame(
         {"loss": [loss], "acc@1": [acc1], "f1score": [f1s]},
@@ -120,13 +132,10 @@ def main() -> None:
         index=None,
     )
 
-    df.to_csv(os.path.join(result_path, "{}_log.csv").format(args.mode), index=False)
-
-    with open(
-        os.path.join(result_path, "{}_c_matrix.csv").format(args.mode), "w"
-    ) as file:
-        writer = csv.writer(file, lineterminator="\n")
-        writer.writerows(c_matrix)
+    # df.to_csv(os.path.join(result_path, "{}_log.csv").format(args.mode), index=False)
+    # with open(os.path.join(result_path, "{}_c_matrix.csv").format(args.mode), "w") as file:
+    #     writer = csv.writer(file, lineterminator="\n")
+    #     writer.writerows(c_matrix)
 
     logger.info("Done.")
 

@@ -11,9 +11,7 @@ logger = getLogger(__name__)
 
 
 class FlowersDataset(Dataset):
-    def __init__(
-        self, csv_file: str, transform: Optional[transforms.Compose] = None
-    ) -> None:
+    def __init__(self, csv_file: str, transform: Optional[transforms.Compose] = None) -> None:
         super().__init__()
 
         try:
